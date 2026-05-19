@@ -83,7 +83,7 @@ class BatteryOptimizer(Hass):
     def OptimizeAC(self, batteryPercent, panelProduction, acEntity : Entity, clearHoldEntity : Entity):
         try:
             if acEntity.state == "cool":
-                if batteryPercent > 80 and panelProduction > 1.0:
+                if batteryPercent > 90 and panelProduction > 1.0:
                     self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, overcooling {acEntity.entity_name} AC...")
                     acEntity.call_service(self.serviceCallToSetTemperature, temperature = 68)
                     # 20260519 - these were all failed attempts at interacting with the evil 4.5.14 dev tagged container...
