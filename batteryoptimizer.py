@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 from appdaemon import adbase as ad      # Minimalist app base
@@ -6,7 +7,7 @@ from appdaemon.adapi import ADAPI       # Basic API
 from appdaemon.plugins.hass import Hass # Home Assistant-specific API
 
 
-class BatteryOptimizer(ad.ADBase):
+class BatteryOptimizer(Hass):
     overallOnOff = "input_boolean.enablebatteryoptimizer"
     gridStatus = "binary_sensor.enpower_202446023084_grid_status"
     batteryTotal = "sensor.envoy_122042083566_battery"
@@ -14,6 +15,10 @@ class BatteryOptimizer(ad.ADBase):
 
     downstairsACEntity = "climate.downstairs"
     upstairsACEntity = "climate.upstairs"
+    #originally climate.set_temperature
+    serviceCallToSetTemperature = "set_temperature"
+    #originally button.press
+    serviceCallToPressButton = "press"
     downstairsClearHold = "button.downstairs_clear_hold"
     upstairsClearHold = "button.upstairs_clear_hold"
 
@@ -21,12 +26,12 @@ class BatteryOptimizer(ad.ADBase):
     acTargetTemperature = "temperature"
 
     hasOptimizedOnce = False
-    adapi: ADAPI
     # ha: Hass
+    adapi: ADAPI
     def initialize(self):
         self.adapi = self.get_ad_api()
-        # self.ha = self.get_plugin_api("HASS")
         result = self.adapi.run_every(self.run_every_cycle, "now", 900)
+        result2 = self.adapi.run_once(self.run_every_cycle, "now")
         self.adapi.log("Battery Optimizer initialized!")
         
     def run_every_cycle(self, **kwargs):
@@ -56,22 +61,38 @@ class BatteryOptimizer(ad.ADBase):
             return
         batteryPercent = self.adapi.get_state(self.batteryTotal)
         panelProduction = self.adapi.get_state(self.production)
+        if (batteryPercent is None or panelProduction is None) or (isinstance(batteryPercent, dict) or isinstance(panelProduction, dict)):
+            self.adapi.log("Error getting battery percent or panel production, skipping optimization...")
+            return
+        batteryPercent = float(batteryPercent)
+        panelProduction = float(panelProduction)
+        # self.adapi.log(f"BatteryPercent: {type(batteryPercent)}, PanelProduction: {type(panelProduction)}")
+        # self.adapi.log(f"BatteryPercent: {batteryPercent}, PanelProduction: {panelProduction}")
+        # for key, value in batteryPercent.items():
+        #     self.adapi.log(f"BatteryPercent key: {key}, value: {value}")
         entityDownstairsAc = self.adapi.get_entity(self.downstairsACEntity)
         entityUpstairsAc = self.adapi.get_entity(self.upstairsACEntity)
         entityDownstairsClearHold = self.adapi.get_entity(self.downstairsClearHold)
         entityUpstairsClearHold = self.adapi.get_entity(self.upstairsClearHold)
+        self.adapi.log(f"Battery at {batteryPercent} %, production at {panelProduction} kW, optimizing...")
 
         self.OptimizeAC(batteryPercent, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
         self.OptimizeAC(batteryPercent, panelProduction, entityUpstairsAc, entityUpstairsClearHold)
-        self.hasOptimizedOnce = True
-
+        self.adapi.log(f"Completed battery optimization routine...")
 
     def OptimizeAC(self, batteryPercent, panelProduction, acEntity : Entity, clearHoldEntity : Entity):
         try:
             if acEntity.state == "cool":
-                if batteryPercent > 85 and panelProduction > 1.0:
-                    self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, overcooling {acEntity.name} AC...")
-                    acEntity.call_service("climate.set_temperature", data={"temperature": 68})
+                if batteryPercent > 80 and panelProduction > 1.0:
+                    self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, overcooling {acEntity.entity_name} AC...")
+                    acEntity.call_service(self.serviceCallToSetTemperature, temperature = 68)
+                    # 20260519 - these were all failed attempts at interacting with the evil 4.5.14 dev tagged container...
+                    # acEntity.call_service(self.serviceCallToSetTemperature, timeout=-1, temperature=68)
+                    # syncResult = self.adapi.call_service(f"{acEntity.domain}/{self.serviceCallToSetTemperature}", acEntity.namespace, entity_id=acEntity.entity_id, temperature=68)
+                    # needAwait = self._entity_service_call(self.serviceCallToSetTemperature, acEntity.entity_id, namespace=acEntity.namespace, temperature=68)
+                    # needAwait = self.call_service(f"{acEntity.domain}/{self.serviceCallToSetTemperature}", acEntity.namespace, temperature=68)
+                    # resultOfAwait = asyncio.run(needAwait)
+                    self.hasOptimizedOnce = True
                 else:
                     self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, clearing hold...")
                     self.ClearHold(clearHoldEntity)
@@ -80,7 +101,7 @@ class BatteryOptimizer(ad.ADBase):
     def ClearHold(self, clearHoldEntity : Entity):
         try:
             self.adapi.log(f"Clearing hold for {clearHoldEntity.name}...")
-            clearHoldEntity.call_service("button.press")
+            clearHoldEntity.call_service(self.serviceCallToPressButton)
         except Exception as e:
             self.adapi.log(f"Error clearing hold for {clearHoldEntity.name}: {e}")
 

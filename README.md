@@ -57,9 +57,8 @@ On the server running Home Assistant, I added another service:
 
 I would use the Docker secret for the token, but it doesn't seem happy.
 
-After that, I run it behind Traefik. I was really struggling with that dash_url because the websocket kept dying all the time. After testing it directly (direct to an IP address), I determined that the aui (Admin user interface) seems borked. Considering it must have worked, I bet it's a trivial issue that just requires running it locally.
+After that, I run it behind Traefik. I was really struggling for a while, but it turns out, it was all caused by the should-not-have-been-released 4.5.14 Docker image whereas PyPi and everything else was still in 4.5.13. The tip off was a log message that revealed that `utils.py` was missing in the Docker container. How much time wasted...
 
 Therefore, todo items for appdaemon when I have a tiny amount more time:
 
 1. Check if token starts with a / and if so, read the secret from the file.
-2. Attempt to look at the websocket issue.
