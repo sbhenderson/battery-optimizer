@@ -39,9 +39,11 @@ class BatteryOptimizer(Hass):
     def run_every_cycle(self, **kwargs):
         time = datetime.now()
         self.adapi.log(f"Running battery optimization routine at {time}...")
+        entityACOvercooling = self.adapi.get_entity(self.acOvercoolingEntityName)
         overallDisabled = self.adapi.get_state(self.overallOnOff) == "on"
         if not overallDisabled:
             self.adapi.log("Battery optimization routine is disabled, skipping...")
+            entityACOvercooling.call_service("turn_off")
             return
         gridOnline = self.adapi.get_state(self.gridStatus) == "on"
         entityDownstairsClearHold = self.adapi.get_entity(self.downstairsClearHold)
@@ -54,12 +56,14 @@ class BatteryOptimizer(Hass):
                 self.hasOptimizedOnce = False
             else:
                 self.adapi.log("Grid is offline, skipping battery optimization routine...")
+            entityACOvercooling.call_service("turn_off")            
             return
         current_hour = time.hour
         if current_hour < 5 or current_hour >= 21:
             # don't have to worry about resetting here because the ecobee will clear hold as part of changing mode
             self.adapi.log("Outside of optimization hours, skipping...")
             self.hasOptimizedOnce = False
+            entityACOvercooling.call_service("turn_off")
             return
         batteryPercent = self.adapi.get_state(self.batteryTotal)
         panelProduction = self.adapi.get_state(self.production)
@@ -76,7 +80,6 @@ class BatteryOptimizer(Hass):
         entityUpstairsAc = self.adapi.get_entity(self.upstairsACEntity)
         entityDownstairsClearHold = self.adapi.get_entity(self.downstairsClearHold)
         entityUpstairsClearHold = self.adapi.get_entity(self.upstairsClearHold)
-        entityACOvercooling = self.adapi.get_entity(self.acOvercoolingEntityName)
         self.adapi.log(f"Battery at {batteryPercent} %, production at {panelProduction} kW, optimizing...")
 
         downstairs = self.OptimizeAC(batteryPercent, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
