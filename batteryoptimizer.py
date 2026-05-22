@@ -21,6 +21,8 @@ class BatteryOptimizer(Hass):
     serviceCallToPressButton = "press"
     downstairsClearHold = "button.downstairs_clear_hold"
     upstairsClearHold = "button.upstairs_clear_hold"
+    
+    acOvercoolingEntityName = "input_boolean.acisovercooling"
 
     # acEntityMode = "hvac_mode"
     acTargetTemperature = "temperature"
@@ -74,13 +76,20 @@ class BatteryOptimizer(Hass):
         entityUpstairsAc = self.adapi.get_entity(self.upstairsACEntity)
         entityDownstairsClearHold = self.adapi.get_entity(self.downstairsClearHold)
         entityUpstairsClearHold = self.adapi.get_entity(self.upstairsClearHold)
+        entityACOvercooling = self.adapi.get_entity(self.acOvercoolingEntityName)
         self.adapi.log(f"Battery at {batteryPercent} %, production at {panelProduction} kW, optimizing...")
 
-        self.OptimizeAC(batteryPercent, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
-        self.OptimizeAC(batteryPercent, panelProduction, entityUpstairsAc, entityUpstairsClearHold)
+        downstairs = self.OptimizeAC(batteryPercent, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
+        upstairs = self.OptimizeAC(batteryPercent, panelProduction, entityUpstairsAc, entityUpstairsClearHold)
+        
+        if downstairs or upstairs and not entityACOvercooling.state == "on":
+            entityACOvercooling.call_service("turn_on")
+        elif not downstairs and not upstairs and entityACOvercooling.state == "on":
+            entityACOvercooling.call_service("turn_off")
+        
         self.adapi.log(f"Completed battery optimization routine...")
 
-    def OptimizeAC(self, batteryPercent, panelProduction, acEntity : Entity, clearHoldEntity : Entity):
+    def OptimizeAC(self, batteryPercent, panelProduction, acEntity : Entity, clearHoldEntity : Entity) -> bool:
         try:
             if acEntity.state == "cool":
                 if batteryPercent > 90 and panelProduction > 1.0:
@@ -93,11 +102,14 @@ class BatteryOptimizer(Hass):
                     # needAwait = self.call_service(f"{acEntity.domain}/{self.serviceCallToSetTemperature}", acEntity.namespace, temperature=68)
                     # resultOfAwait = asyncio.run(needAwait)
                     self.hasOptimizedOnce = True
+                    return True
                 else:
                     self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, clearing hold...")
                     self.ClearHold(clearHoldEntity)
         except Exception as e:
             self.adapi.log(f"Error optimizing AC {acEntity.name}: {e}")
+            
+        return False        
     def ClearHold(self, clearHoldEntity : Entity):
         try:
             self.adapi.log(f"Clearing hold for {clearHoldEntity.name}...")
