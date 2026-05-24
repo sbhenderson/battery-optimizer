@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import math
 
 from appdaemon import adbase as ad      # Minimalist app base
 from appdaemon.entity import Entity
@@ -23,6 +24,9 @@ class BatteryOptimizer(Hass):
     upstairsClearHold = "button.upstairs_clear_hold"
     
     acOvercoolingEntityName = "input_boolean.acisovercooling"
+    acOvercoolingSetpointEntity = "input_number.overcoolsetpoint"
+    acOvercoolingMinPowerPanelEntity = "input_number.overcoolminpowerpanel"
+    acOvercoolingMinBatteryEntity = "input_number.overcoolminbattery"
 
     # acEntityMode = "hvac_mode"
     acTargetTemperature = "temperature"
@@ -65,13 +69,14 @@ class BatteryOptimizer(Hass):
             self.hasOptimizedOnce = False
             entityACOvercooling.call_service("turn_off")
             return
-        batteryPercent = self.adapi.get_state(self.batteryTotal)
-        panelProduction = self.adapi.get_state(self.production)
-        if (batteryPercent is None or panelProduction is None) or (isinstance(batteryPercent, dict) or isinstance(panelProduction, dict)):
-            self.adapi.log("Error getting battery percent or panel production, skipping optimization...")
+        acOvercoolSetpoint = self.GetStateAsFloat(self.acOvercoolingSetpointEntity)
+        acOvercoolMinPower = self.GetStateAsFloat(self.acOvercoolingMinPowerPanelEntity)
+        acOvercoolMinBattery = self.GetStateAsFloat(self.acOvercoolingMinBatteryEntity)
+        batteryPercent = self.GetStateAsFloat(self.batteryTotal)
+        panelProduction = self.GetStateAsFloat(self.production)
+        if math.isnan(acOvercoolSetpoint) or math.isnan(acOvercoolMinPower) or math.isnan(batteryPercent) or math.isnan(panelProduction):
+            self.adapi.log("Error getting state for one or more entities, skipping optimization routine...")
             return
-        batteryPercent = float(batteryPercent)
-        panelProduction = float(panelProduction)
         # self.adapi.log(f"BatteryPercent: {type(batteryPercent)}, PanelProduction: {type(panelProduction)}")
         # self.adapi.log(f"BatteryPercent: {batteryPercent}, PanelProduction: {panelProduction}")
         # for key, value in batteryPercent.items():
@@ -82,8 +87,8 @@ class BatteryOptimizer(Hass):
         entityUpstairsClearHold = self.adapi.get_entity(self.upstairsClearHold)
         self.adapi.log(f"Battery at {batteryPercent} %, production at {panelProduction} kW, optimizing...")
 
-        downstairs = self.OptimizeAC(batteryPercent, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
-        upstairs = self.OptimizeAC(batteryPercent, panelProduction, entityUpstairsAc, entityUpstairsClearHold)
+        downstairs = self.OptimizeAC(batteryPercent, acOvercoolSetpoint, acOvercoolMinPower, acOvercoolMinBattery, panelProduction, entityDownstairsAc, entityDownstairsClearHold)
+        upstairs = self.OptimizeAC(batteryPercent, acOvercoolSetpoint, acOvercoolMinPower, acOvercoolMinBattery, panelProduction, entityUpstairsAc, entityUpstairsClearHold)
         
         if downstairs or upstairs and not entityACOvercooling.state == "on":
             entityACOvercooling.call_service("turn_on")
@@ -91,13 +96,22 @@ class BatteryOptimizer(Hass):
             entityACOvercooling.call_service("turn_off")
         
         self.adapi.log(f"Completed battery optimization routine...")
-
-    def OptimizeAC(self, batteryPercent, panelProduction, acEntity : Entity, clearHoldEntity : Entity) -> bool:
+    def GetStateAsFloat(self, entity) -> float:
+        state = self.adapi.get_state(entity)
+        if state is None or isinstance(state, dict):
+            self.adapi.log(f"Error getting state for {entity}, state is None or dict")
+            return float('nan')
+        try:
+            return float(state)
+        except ValueError:
+            self.adapi.log(f"Error converting state to float for {entity}, state: {state}")
+            return float('nan')
+    def OptimizeAC(self, batteryPercent, overcoolSetpoint, overcoolMinPower, minBattery, panelProduction, acEntity : Entity, clearHoldEntity : Entity) -> bool:
         try:
             if acEntity.state == "cool":
-                if batteryPercent > 90 and panelProduction > 1.0:
+                if batteryPercent > minBattery and panelProduction > overcoolMinPower:
                     self.adapi.log(f"Battery at {batteryPercent}%, production at {panelProduction}kW, overcooling {acEntity.entity_name} AC...")
-                    acEntity.call_service(self.serviceCallToSetTemperature, temperature = 68)
+                    acEntity.call_service(self.serviceCallToSetTemperature, temperature = overcoolSetpoint)
                     # 20260519 - these were all failed attempts at interacting with the evil 4.5.14 dev tagged container...
                     # acEntity.call_service(self.serviceCallToSetTemperature, timeout=-1, temperature=68)
                     # syncResult = self.adapi.call_service(f"{acEntity.domain}/{self.serviceCallToSetTemperature}", acEntity.namespace, entity_id=acEntity.entity_id, temperature=68)
